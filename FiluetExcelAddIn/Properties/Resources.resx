@@ -142,4 +142,19 @@
   <data name="Post" type="System.Resources.ResXFileRef, System.Windows.Forms">
     <value>..\Resources\Post.xlsx;System.Byte[], mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089</value>
   </data>
+  <data name="Authorization" xml:space="preserve">
+    <value>AccessToken 9Cn46s4ucLfZZpEMxo1zj092JudDFmrL</value>
+  </data>
+  <data name="ConnectionString" xml:space="preserve">
+    <value>Server=RU-LOB-WMS01;Database=ExchangeDB;User Id=ExUser;Password=good4you</value>
+  </data>
+  <data name="ContentType" xml:space="preserve">
+    <value>application/json;charset=UTF-8</value>
+  </data>
+  <data name="SearchURL" xml:space="preserve">
+    <value>https://otpravka-api.pochta.ru/1.0/shipment/</value>
+  </data>
+  <data name="XUserAuthorization" xml:space="preserve">
+    <value>Basic cnBvc3RAZmlsdWV0LnJ1OnluY1ZoeGhzVlJBag==</value>
+  </data>
 </root>
