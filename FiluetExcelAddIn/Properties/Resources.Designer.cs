@@ -152,7 +152,7 @@ namespace FiluetExcelAddIn.Properties {
         /// </summary>
         public static System.Drawing.Bitmap russian_post {
             get {
-                object obj = ResourceManager.GetObject("russian-post", resourceCulture);
+                object obj = ResourceManager.GetObject("russian_post", resourceCulture);
                 return ((System.Drawing.Bitmap)(obj));
             }
         }
