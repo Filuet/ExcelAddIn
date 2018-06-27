@@ -23,9 +23,22 @@ namespace FiluetExcelAddIn
         private static bool isImportSPSR_Running = false;
         private static bool isShipToTransCost_Running = false;
         private static bool isPostImport_Running = false;
+        private static bool isOrderBulk_LvOrclLotMismatch_Running = false;
+        private static bool isReceiptBulk_LvOrclLotMismatch_Running = false;
+        private static bool isStockBulk_LvOrclLotMismatch_Running = false;
+
         public static ProgressForm formProgress = new ProgressForm();
         public static DatePeriod PostDatePick = new DatePeriod();
         public static Excel.Worksheet ws;
+
+        public static string OrderCode = null;
+        public static string fileName = null;
+        public static int RU1B10 = 0;
+        public static int RU1B68 = 0;
+        public static int RU1B80 = 0;
+        public static int RUCB20 = 0;
+        public static int RUCB80 = 0;
+
 
 
         private void ThisAddIn_Startup(object sender, EventArgs e)
@@ -589,6 +602,580 @@ namespace FiluetExcelAddIn
 
 
         #endregion
+
+        #region LvOrclStock_ReceiptBulkMismatch
+        //Сравнение запасов по партии, товару и количеству в LV и Oracle
+        public static void LvOrclStock_ReceiptBulkMismatch_Report()
+        {
+            string ErrMsg = null;
+
+            if (isReceiptBulk_LvOrclLotMismatch_Running)
+            {
+                MessageBox.Show("Обработка уже идет!");
+                return;
+            }
+
+            isReceiptBulk_LvOrclLotMismatch_Running = true;
+            Cursor.Current = Cursors.WaitCursor;
+
+            frmTextBoxParameter form = new frmTextBoxParameter("Приход:");
+            form.ShowDialog();
+            if (OrderCode == null)
+            {
+                isReceiptBulk_LvOrclLotMismatch_Running = false;
+                return;
+            }
+
+            //Проверка условий выпуска отчета
+            DataTable dt = new DataTable();
+            string sql = string.Format("select [ExchangeDB].[dbo].[FIL_HRBL_LvOrclStock_ReceiptBulkCompleteCheck]('{0}')", OrderCode);
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                    {
+                        SqlDataReader dr = cmd.ExecuteReader();
+                        dt.Load(dr);
+                        dr.Close();
+                    }
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+                isReceiptBulk_LvOrclLotMismatch_Running = false;
+                return;
+            }
+
+            if (dt.Rows.Count != 0)
+            {
+                ErrMsg = dt.Rows[0][0].ToString();
+                if (!String.IsNullOrEmpty(ErrMsg))
+                {
+                    MessageBox.Show(ErrMsg);
+                    isReceiptBulk_LvOrclLotMismatch_Running = false;
+                    return;
+                }
+            }
+
+            //Вставка в докмуент листа Excel из ресурсов
+            Excel.Workbook wb = Globals.ThisAddIn.Application.ActiveWorkbook;
+            string tmpFile = Path.GetTempFileName();
+            File.WriteAllBytes(tmpFile, Properties.Resources.LvOrclStock);
+            Excel.Workbook wbT = Globals.ThisAddIn.Application.Workbooks.Add(tmpFile);
+            Excel.Worksheet wsT = wbT.Worksheets["Контроль прихода"];
+
+            wsT.Copy(After: wb.Worksheets[wb.Worksheets.Count]);
+            Excel.Worksheet ws = wb.Worksheets[wb.Worksheets.Count];
+
+            Clipboard.Clear();
+            wbT.Close();
+            File.Delete(tmpFile);
+
+            //Получаем данные для отчета
+            DataSet ds = null;
+            ds = LvOrclStock_ReceiptBulkMismatch_GetData(OrderCode);
+            //Грузим их в Excel
+            LvOrclStock_ReceiptBulkMismatch_FillExcel(ws, ds);
+
+            Cursor.Current = Cursors.Default;
+            isReceiptBulk_LvOrclLotMismatch_Running = false;
+            Clipboard.Clear();
+        }
+
+        private static DataSet LvOrclStock_ReceiptBulkMismatch_GetData(string OrderCode)
+        {
+            DataSet ds = new DataSet();
+            string sql = string.Format("exec [dbo].[FIL_HRBL_LvOrclStock_ReceiptBulkMismatch] @ReceiptCode = '{0}'", OrderCode);
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                    {
+                        using (SqlDataAdapter da = new SqlDataAdapter(cmd))
+                        {
+                            da.Fill(ds);
+                        }
+                    }
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+                isReceiptBulk_LvOrclLotMismatch_Running = false;
+                return null;
+            }
+            return ds;
+        }
+
+        private static void LvOrclStock_ReceiptBulkMismatch_FillExcel(Excel.Worksheet ws, DataSet ds)
+        {
+            if (ds == null || ds.Tables.Count != 2)
+            {
+                MessageBox.Show("Нет данных");
+                return;
+            }
+
+            DataTable dtHeader = ds.Tables[0];
+            DataTable dtDetail = ds.Tables[1];
+
+            ws.Cells[1, 2].Value2 = dtHeader.Rows[0]["OrderNo"];
+            ws.Cells[2, 2].Value2 = dtHeader.Rows[0]["InputDate"];
+            ws.Cells[3, 2].Value2 = dtHeader.Rows[0]["ReceiptDate"];
+
+            if (ds.Tables[1].Rows.Count == 0)
+            {
+                MessageBox.Show("Расхождений не обнаружено");
+                return;
+            }
+
+            int row = 6;
+            Excel.Range rngDetail = ws.Rows[row].EntireRow;
+
+            foreach (DataRow drow in dtDetail.Rows)
+            {
+                rngDetail = ws.Rows[row].EntireRow;
+                rngDetail.Copy(ws.Rows[row + 1]);
+
+                ws.Cells[row, 1].Value2 = drow["StockCode"];
+                ws.Cells[row, 2].Value2 = drow["SellCode"];
+                ws.Cells[row, 3].Value2 = drow["Lot"];
+                ws.Cells[row, 4].Value2 = drow["Qty"];
+                ws.Cells[row, 5].Value2 = drow["System"];
+                if (drow["System"].ToString().Equals("Oracle"))
+                    ws.Rows[row].EntireRow.Interior.Color = System.Drawing.ColorTranslator.ToOle(System.Drawing.Color.MintCream);
+                row++;
+            }
+            rngDetail = ws.Rows[row].EntireRow;
+            rngDetail.Delete();
+        }
+        #endregion
+        #region LvOrclStock_OrderBulkMismatch
+        //Сравнение запасов по партии, товару и количеству в LV и Oracle
+        public static void LvOrclStock_OrderBulkMismatch_Report()
+        {
+            string ErrMsg = null;
+
+            if (isOrderBulk_LvOrclLotMismatch_Running)
+            {
+                MessageBox.Show("Обработка уже идет!");
+                return;
+            }
+
+            isOrderBulk_LvOrclLotMismatch_Running = true;
+            Cursor.Current = Cursors.WaitCursor;
+
+            frmTextBoxParameter form = new frmTextBoxParameter("Расход:");
+            form.ShowDialog();
+            if (OrderCode == null)
+            {
+                isOrderBulk_LvOrclLotMismatch_Running = false;
+                return;
+            }
+
+            //Проверка условий выпуска отчета
+            DataTable dt = new DataTable();
+            string sql = string.Format("select [FiluetWH].[dbo].[FIL_HRBL_LvOrclStock_OrderBulkAllocatedCheck]('{0}')", OrderCode);
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                    {
+                        SqlDataReader dr = cmd.ExecuteReader();
+                        dt.Load(dr);
+                        dr.Close();
+                    }
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+                isOrderBulk_LvOrclLotMismatch_Running = false;
+                return;
+            }
+
+            if (dt.Rows.Count != 0)
+            {
+                ErrMsg = dt.Rows[0][0].ToString();
+                if (!String.IsNullOrEmpty(ErrMsg))
+                {
+                    MessageBox.Show(ErrMsg);
+                    isOrderBulk_LvOrclLotMismatch_Running = false;
+                    return;
+                }
+            }
+
+            //Вставка в докмуент листа Excel из ресурсов
+            Excel.Workbook wb = Globals.ThisAddIn.Application.ActiveWorkbook;
+            string tmpFile = Path.GetTempFileName();
+            File.WriteAllBytes(tmpFile, Properties.Resources.LvOrclStock);
+            Excel.Workbook wbT = Globals.ThisAddIn.Application.Workbooks.Add(tmpFile);
+            Excel.Worksheet wsT = wbT.Worksheets["Контроль расхода"];
+
+            wsT.Copy(After: wb.Worksheets[wb.Worksheets.Count]);
+            Excel.Worksheet ws = wb.Worksheets[wb.Worksheets.Count];
+
+            Clipboard.Clear();
+            wbT.Close();
+            File.Delete(tmpFile);
+
+            //Получаем данные для отчета
+            DataSet ds = null;
+            ds = LvOrclStock_BulkOrderMismatch_GetData(OrderCode);
+            //Грузим их в Excel
+            LvOrclStock_BulkOrderMismatch_FillExcel(ws, ds);
+
+            Cursor.Current = Cursors.Default;
+            isOrderBulk_LvOrclLotMismatch_Running = false;
+            Clipboard.Clear();
+        }
+
+        private static DataSet LvOrclStock_BulkOrderMismatch_GetData(string OrderCode)
+        {
+            DataSet ds = new DataSet();
+            string sql = string.Format("exec [dbo].[FIL_HRBL_LvOrclStock_OrderBulkMismatch] @OrderCode = '{0}'", OrderCode);
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                    {
+                        using (SqlDataAdapter da = new SqlDataAdapter(cmd))
+                        {
+                            da.Fill(ds);
+                        }
+                    }
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+                isOrderBulk_LvOrclLotMismatch_Running = false;
+                return null;
+            }
+            return ds;
+        }
+
+        private static void LvOrclStock_BulkOrderMismatch_FillExcel(Excel.Worksheet ws, DataSet ds)
+        {
+            if (ds == null || ds.Tables.Count != 2)
+            {
+                MessageBox.Show("Нет данных");
+                return;
+            }
+
+            DataTable dtHeader = ds.Tables[0];
+            DataTable dtDetail = ds.Tables[1];
+
+            ws.Cells[1, 2].Value2 = dtHeader.Rows[0]["OrderNo"];
+            ws.Cells[2, 2].Value2 = dtHeader.Rows[0]["InputDate"];
+            ws.Cells[3, 2].Value2 = dtHeader.Rows[0]["ShipDate"];
+
+            if (ds.Tables[1].Rows.Count == 0)
+            {
+                MessageBox.Show("Расхождений не обнаружено");
+                return;
+            }
+
+            int row = 6;
+            Excel.Range rngDetail = ws.Rows[row].EntireRow;
+
+            foreach (DataRow drow in dtDetail.Rows)
+            {
+                rngDetail = ws.Rows[row].EntireRow;
+                rngDetail.Copy(ws.Rows[row + 1]);
+
+                ws.Cells[row, 1].Value2 = drow["StockCode"];
+                ws.Cells[row, 2].Value2 = drow["SellCode"];
+                ws.Cells[row, 3].Value2 = drow["Lot"];
+                ws.Cells[row, 4].Value2 = drow["Qty"];
+                ws.Cells[row, 5].Value2 = drow["System"];
+                if (drow["System"].ToString().Equals("Oracle"))
+                    ws.Rows[row].EntireRow.Interior.Color = System.Drawing.ColorTranslator.ToOle(System.Drawing.Color.MintCream);
+                row++;
+            }
+            rngDetail = ws.Rows[row].EntireRow;
+            rngDetail.Delete();
+        }
+        #endregion LvOrclStock
+        #region LvOrclStock_StockMismatch
+        /// <summary>
+        /// Производит запрос параметров 
+        /// Вывод в Excel
+        /// отчета "Сверка остатков" 
+        /// </summary>
+        public static void LvOrclStock_StockBulkMismatch_Report()
+        {
+            //1.Check if process is already started
+            string ErrMsg = null;
+
+            if (isStockBulk_LvOrclLotMismatch_Running)
+            {
+                MessageBox.Show("Обработка уже идет!");
+                return;
+            }
+
+            isStockBulk_LvOrclLotMismatch_Running = true;
+            Cursor.Current = Cursors.WaitCursor;
+
+            frmFileParameter form = new frmFileParameter();
+            form.ShowDialog();
+            if (fileName == null)
+            {
+                isStockBulk_LvOrclLotMismatch_Running = false;
+                return;
+            }
+
+            //Чтение разбор файла, загрузка данных в базу
+            LvOrclStock_StockBulkMismatch_ParseFile();
+
+            //Вставка в докмуент листа Excel из ресурсов
+            Excel.Workbook wb = Globals.ThisAddIn.Application.ActiveWorkbook;
+            string tmpFile = Path.GetTempFileName();
+            File.WriteAllBytes(tmpFile, Properties.Resources.LvOrclStock);
+            Excel.Workbook wbT = Globals.ThisAddIn.Application.Workbooks.Add(tmpFile);
+            Excel.Worksheet wsT = wbT.Worksheets["Сверка остатков"];
+
+            wsT.Copy(After: wb.Worksheets[wb.Worksheets.Count]);
+            Excel.Worksheet ws = wb.Worksheets[wb.Worksheets.Count];
+
+            Clipboard.Clear();
+            wbT.Close();
+            File.Delete(tmpFile);
+
+            //Получаем данные для отчета
+            DataSet ds = null;
+            ds = LvOrclStock_StockBulkMismatch_GetData();
+            //Грузим их в Excel
+            LvOrclStock_StockBulkMismatch_FillExcel(ws, ds);
+
+            Cursor.Current = Cursors.Default;
+            isStockBulk_LvOrclLotMismatch_Running = false;
+            Clipboard.Clear();
+        }
+
+        /// <summary>
+        /// Чтение и разбор текстового файла и загрузка данных в базу
+        /// </summary>
+        private static bool LvOrclStock_StockBulkMismatch_ParseFile()
+        {
+            string s = null;
+            string sExpDate = null;
+            string sQty = null;
+            string Sku = null;
+            string SkuNew = null;
+            string Lot = null;
+            string sql = null;
+            string Locator = null;
+            string LocatorNew = null;
+
+            int ReportPage = 0;
+            int res = 0; //Номер страницы отчеты
+
+            DateTime ReportDateTime = DateTime.MinValue;
+            DateTime ExpDate = DateTime.MinValue; //Дата формирования отчета
+
+            float Qty = 0;
+
+            //Очистка данных в базе
+            sql = "EXEC [FiluetWH].[dbo].[FIL_HRBL_LvOrclStock_StockOrclDelete]";
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                    {
+                        res = cmd.ExecuteNonQuery();
+                    }
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+                return false;
+            }
+
+
+            //Читаем файл отчета
+            StreamReader sr = new StreamReader(fileName);
+
+            s = sr.ReadLine();
+
+            while (!sr.EndOfStream)
+            {
+                //Если с текущей строки начинается страница
+                if (s.Contains("HL Quantity Onhand Report"))
+                {
+                    if (!DateTime.TryParse(s.Substring(212).Trim(), CultureInfo.InvariantCulture.DateTimeFormat, System.Globalization.DateTimeStyles.None, out ReportDateTime))
+                        return false;
+                }
+
+                //Если строка содержит номер страницы
+                else if (s.Contains("Page:"))
+                {
+                    try
+                    {
+                        ReportPage = int.Parse(s.Substring(212).Trim());
+                    }
+                    catch//System.IndexOutOfRangeException, System.FormatException
+                    {
+                        return false;
+                    }
+
+                    //Пропускаем строки до таблицы
+                    for (int i = 1; i <= 9; i++)
+                        s = sr.ReadLine();
+
+                }  //Исключаем дополнительные строки с переносом данных
+                else if (s.Length > 193 && !String.IsNullOrWhiteSpace(sQty = s.Substring(182, 10).Replace(",", "")))
+                {
+                    //Получаем количество
+                    if (!float.TryParse(sQty, System.Globalization.NumberStyles.Float, CultureInfo.InvariantCulture.NumberFormat, out Qty))
+                        return false;
+
+                    //...Артикул
+                    SkuNew = s.Substring(4, 12).Trim();
+                    Sku = String.IsNullOrWhiteSpace(SkuNew) ? Sku : SkuNew;
+                    if (String.IsNullOrWhiteSpace(Sku))
+                        return false;
+
+                    //...Locator
+                    LocatorNew = s.Substring(94, 6).Trim();
+                    Locator = String.IsNullOrWhiteSpace(LocatorNew) ? Locator : LocatorNew;
+                    if (String.IsNullOrWhiteSpace(Locator))
+                        return false;
+
+                    //...Lot
+                    Lot = s.Substring(149, 10).Split('-')[0].Trim();
+                    Lot = String.IsNullOrEmpty(Lot) ? "NULL" : "'" + Lot + "'";
+
+                    //...ExpDate
+
+                    if (DateTime.TryParse(s.Substring(161, 9).Trim(), CultureInfo.InvariantCulture.DateTimeFormat, System.Globalization.DateTimeStyles.None, out ExpDate))
+                        sExpDate = "'" + ExpDate.ToString("yyyyMMdd HH:mm:ss.000") + "'";
+                    else
+                        sExpDate = "NULL";
+
+                    //Запись в базу
+                    sql = string.Format("EXEC [FiluetWH].[dbo].[FIL_HRBL_LvOrclStock_StockOrclItemInsert] @Sku = '{0}', @Lot = {1}, @ExpDate = {2}, @Qty = {3}, @ReportDateTime = '{4}', @ReportPage = {5}, @Locator = '{6}'",
+                    Sku, Lot, sExpDate, Qty, ReportDateTime.ToString("yyyyMMdd HH:mm:ss.000"), ReportPage, Locator);
+
+                    try
+                    {
+                        using (SqlConnection conn = new SqlConnection(connStr))
+                        {
+                            conn.Open();
+                            using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                            {
+                                res = cmd.ExecuteNonQuery();
+                            }
+                            conn.Close();
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error: " + ex.Message);
+                        return false;
+                    }
+                }
+
+                //Считываем следующую строку
+                s = sr.ReadLine();
+
+            };
+            return true;
+        }
+
+        private static DataSet LvOrclStock_StockBulkMismatch_GetData()
+        {
+            DataSet ds = new DataSet();
+            string sql = string.Format("exec [FiluetWH].[dbo].[FIL_HRBL_LvOrclStock_StockBulkMismatch] @LocatorList = '{0}'", "#" + RU1B10.ToString() + "#" + RU1B80.ToString() + "#" + RUCB20.ToString() + "#" + RUCB80.ToString() + "#");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connStr))
+                {
+                    conn.Open();
+                    using (SqlCommand cmd = new SqlCommand() { CommandType = CommandType.Text, Connection = conn, CommandText = sql, CommandTimeout = 120 })
+                    {
+                        using (SqlDataAdapter da = new SqlDataAdapter(cmd))
+                        {
+                            da.Fill(ds);
+                        }
+                    }
+                    conn.Close();
+                }
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error: " + ex.Message);
+                isReceiptBulk_LvOrclLotMismatch_Running = false;
+                return null;
+            }
+            return ds;
+        }
+
+        private static void LvOrclStock_StockBulkMismatch_FillExcel(Excel.Worksheet ws, DataSet ds)
+        {
+
+
+            if (ds == null || ds.Tables.Count != 2)
+            {
+                MessageBox.Show("Нет данных");
+                return;
+            }
+
+            DataTable dtHeader = ds.Tables[0];
+            DataTable dtDetail = ds.Tables[1];
+
+            ws.Cells[1, 2].Value2 = dtHeader.Rows[0]["StockOrclDateTime"];
+            ws.Cells[2, 2].Value2 = dtHeader.Rows[0]["Today"];
+
+            if (ds.Tables[1].Rows.Count == 0)
+            {
+                MessageBox.Show("Расхождений не обнаружено");
+                return;
+            }
+
+            int row = 5;
+            Excel.Range rngDetail = ws.Rows[row].EntireRow;
+
+            foreach (DataRow drow in dtDetail.Rows)
+            {
+                rngDetail = ws.Rows[row].EntireRow;
+                rngDetail.Copy(ws.Rows[row + 1]);
+
+                ws.Cells[row, 1].Value2 = drow["LVLocations"];
+                ws.Cells[row, 2].Value2 = drow["OrclLocator"];
+                ws.Cells[row, 3].Value2 = drow["StockCode"];
+                ws.Cells[row, 4].Value2 = drow["SellCode"];
+                ws.Cells[row, 5].Value2 = drow["Lot"];
+                ws.Cells[row, 6].Value2 = drow["ExpDate"];
+                ws.Cells[row, 7].Value2 = drow["OrclQty"];
+                ws.Cells[row, 8].Value2 = drow["LvQty"];
+
+                row++;
+            }
+            rngDetail = ws.Rows[row].EntireRow;
+            rngDetail.Delete();
+        }
+
+        #endregion
+
 
         private static void InsertInvoice(Invoice inv, string type)
         {

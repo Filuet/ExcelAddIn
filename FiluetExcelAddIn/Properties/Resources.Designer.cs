@@ -70,7 +70,7 @@ namespace FiluetExcelAddIn.Properties {
         }
         
         /// <summary>
-        ///   Looks up a localized string similar to Server=RU-LOB-WMS01;Database=ExchangeDB;User Id=ExUser;Password=good4you.
+        ///   Looks up a localized string similar to Server=RU-LOB-SQL01;Database=ExchangeDB;User Id=ExUser;Password=good4you.
         /// </summary>
         public static string ConnectionString {
             get {
@@ -114,6 +114,16 @@ namespace FiluetExcelAddIn.Properties {
             get {
                 object obj = ResourceManager.GetObject("DPD_Logo", resourceCulture);
                 return ((System.Drawing.Bitmap)(obj));
+            }
+        }
+        
+        /// <summary>
+        ///   Looks up a localized resource of type System.Byte[].
+        /// </summary>
+        public static byte[] LvOrclStock {
+            get {
+                object obj = ResourceManager.GetObject("LvOrclStock", resourceCulture);
+                return ((byte[])(obj));
             }
         }
         

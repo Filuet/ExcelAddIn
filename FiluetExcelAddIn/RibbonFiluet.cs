@@ -40,5 +40,20 @@ namespace FiluetExcelAddIn
 		{
 			ThisAddIn.PostImport();
 		}
-	}
+
+        private void button6_Click(object sender, RibbonControlEventArgs e)
+        {
+            ThisAddIn.LvOrclStock_ReceiptBulkMismatch_Report();
+        }
+
+        private void button7_Click(object sender, RibbonControlEventArgs e)
+        {
+            ThisAddIn.LvOrclStock_OrderBulkMismatch_Report();
+        }
+
+        private void button8_Click(object sender, RibbonControlEventArgs e)
+        {
+            ThisAddIn.LvOrclStock_StockBulkMismatch_Report();
+        }
+    }
 }
